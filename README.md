@@ -9,5 +9,6 @@ Activate using `CMD+G` as a toggle to hide/show the grid
 - Small Move using Shift+JKLM
 - Micro Move using Ctrl+Shift+JKLM
 - Click using "Enter" key
+- Switch to monitors by number, using "M1", "M2", etc.
 
 and grid movement can be done based off of letters displayed in the grid.

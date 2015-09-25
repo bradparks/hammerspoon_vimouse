@@ -3,5 +3,11 @@ WORK IN PROGRESS: Move your mouse with your keyboard, using vi keystrokes and a 
 
 To use, save to your hammerspoon extensions in a folder named `vimouse`
 
-Activate using `CMD+G` as a toggle to hide/show the grid. 
-Move using Ctrl+JKLM, and grid movement is in progress based off of letters displayed in the grid.
+Activate using `CMD+G` as a toggle to hide/show the grid
+
+- Big Move using Ctrl+JKLM
+- Small Move using Shift+JKLM
+- Micro Move using Ctrl+Shift+JKLM
+- Click using "Enter" key
+
+and grid movement can be done based off of letters displayed in the grid.

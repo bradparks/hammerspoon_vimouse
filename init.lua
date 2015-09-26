@@ -1,17 +1,24 @@
 local screen = require 'hs.screen'
 local log = require'hs.logger'.new('vimouse')
+local grids = {}
+local phrase = ""
+local CURSOR_HIGHLIGHT_RADIUS = 60
+
 local vimouse = {}
 local NUM_ROWS = 10
 local NUM_COLS = 10
-local grids = {}
-local phrase = ""
-local VIM_BIG_MODIFIER = {"ctrl"}
-local VIM_SMALL_MODIFIER = {"shift"}
-local VIM_MICRO_MODIFIER = {"ctrl","shift"}
-local radius = 60
+local BASE_COLOR = {["red"]=1,["blue"]=0,["green"]=0,["alpha"]=1}
+
 local MOUSE_MOVE_BIG_DELTA = 50 
 local MOUSE_MOVE_SMALL_DELTA = 10
 local MOUSE_MOVE_MICRO_DELTA = 2
+local VIM_SMALL_MODIFIER = {"ctrl"}
+local VIM_BIG_MODIFIER = {"shift"}
+local VIM_MICRO_MODIFIER = {"ctrl","shift"}
+
+local CELL_FONT_SIZE = 30
+local CELL_FONT_OFFSET = 25 
+
 local SCROLL_DELTA = 50
 local SCROLL_MODE = 'pixel'
 
@@ -33,6 +40,7 @@ end
 function toCSV (tt)
   return hs.inspect.inspect(tt)
 end
+
 
 KEYS = hs.hotkey.modal.new({"cmd","ctrl","alt"}, "b")
 function KEYS:entered() 
@@ -65,6 +73,12 @@ KEYS:bind({""}, "return", function()
   vimouse.debug("RETURN")
 end)
 
+KEYS:bind({"ctrl"}, "return", function()
+  local ptMouse = hs.mouse.getAbsolutePosition()
+  hs.eventtap.rightClick(ptMouse)
+  vimouse.debug("RETURN")
+end)
+
 function scrollDown()
   vimouse.debug("scroll down")
   local offsets = {horizontal=0, vertical=SCROLL_DELTA} 
@@ -76,6 +90,46 @@ function scrollUp()
   local offsets = {horizontal=0, vertical=SCROLL_DELTA} 
   hs.eventtap.scrollWheel(offsets, {}, unit, SCROLL_MODE) 
 end
+
+-- Bind arrow keys
+function bindGlobalRepeat(modifier, key, callback)
+  hs.hotkey.bind(modifier, key, callback, nil, callback)
+end
+
+local pageUpDownModifier = {"alt","shift"}
+bindGlobalRepeat(pageUpDownModifier, "J", function()
+  hs.eventtap.keyStroke({}, "pagedown")
+end)
+bindGlobalRepeat(pageUpDownModifier, "K", function()
+  hs.eventtap.keyStroke({}, "pageup")
+end)
+
+local arrowModifier = {"alt"}
+bindGlobalRepeat(arrowModifier, "H", function()
+  hs.eventtap.keyStroke({}, "left")
+end)
+bindGlobalRepeat(arrowModifier, "J", function()
+  hs.eventtap.keyStroke({}, "down")
+end)
+bindGlobalRepeat(arrowModifier, "K", function()
+  hs.eventtap.keyStroke({}, "up")
+end)
+bindGlobalRepeat(arrowModifier, "L", function()
+  hs.eventtap.keyStroke({}, "right")
+end)
+
+bindRepeat('H', VIM_MICRO_MODIFIER,  function()
+  vimouse.moveLeft(MOUSE_MOVE_MICRO_DELTA)
+end)
+bindRepeat('J', VIM_MICRO_MODIFIER,  function()
+  vimouse.moveDown(MOUSE_MOVE_MICRO_DELTA)
+end)
+bindRepeat('K', VIM_MICRO_MODIFIER,  function()
+  vimouse.moveUp(MOUSE_MOVE_MICRO_DELTA)
+end)
+bindRepeat('L', VIM_MICRO_MODIFIER,  function()
+  vimouse.moveRight(MOUSE_MOVE_MICRO_DELTA)
+end)
 
 KEYS:bind({"ctrl"}, "return", function()
   scrollDown()
@@ -120,24 +174,40 @@ bindRepeat('L', VIM_BIG_MODIFIER,  function()
   vimouse.moveRight(MOUSE_MOVE_BIG_DELTA)
 end)
 
-function vimouse.switchMonitor(num)
-  num = tonumber(num)
-  if (num == nil) then
-    return
-  end
+function vimouse.switchToMonitor(num)
+  vimouse.switchToCenterOfMonitor(num)
+end
 
-  local screens=screen.allScreens()
-
-  local s =screens[num]
+function vimouse.getCenterOfScreen(s)
   if (s == nil) then
-    return
+    s = hs.mouse.getCurrentScreen()
   end
 
-  vimouse.debug("SWITCHED TO MONITOR:" .. num)
   local f = s:fullFrame()
   local x = f.x + f.w/2
   local y = f.y + f.h/2
-  vimouse.moveMouse(x,y)
+  local result = {x=x, y=y}
+  assert(result, "Missing rect")
+
+  return result
+end
+
+function vimouse.getCenterOfMonitor(num)
+  num = tonumber(num)
+  if (num == nil) then
+    return nil
+  end
+
+  local screens=screen.allScreens()
+  local s = screens[num]
+  return vimouse.getCenterOfScreen(s)
+end
+
+function vimouse.switchToCenterOfMonitor(num)
+  local pt = vimouse.getCenterOfMonitor(num)
+  if (not (pt == nil)) then
+    vimouse.moveMouse(pt.x, pt.y)
+  end
 end
 
 function vimouse.processAction(data)
@@ -147,7 +217,7 @@ function vimouse.processAction(data)
   local col = string.byte(char1) - 65
   local row = string.byte(char2) - 65
   if (char1 == "M") then
-    vimouse.switchMonitor(char2)
+    vimouse.switchToMonitor(char2)
     return
   end
   local delta = 100
@@ -208,6 +278,8 @@ vimouse.clearPhraseTimer = nil
 vimouse.gridVisible = true
 
 function vimouse.toggle()
+  vimouse.createGridForEachMonitor()
+
     if (vimouse.gridVisible) then
       hs.vimouse.show()
     else
@@ -270,8 +342,7 @@ function vimouse.divide(a,b)
   return c
 end
 
-function vimouse.drawGridInFrame(cols,rows,f)
-  log.w('Screen.f', cols,rows, f.w, f.h)
+function vimouse.drawGridInFrame(id, cols,rows,f)
   local result = {}
   local width = vimouse.divide(f.w,rows)
   local height = vimouse.divide(f.h,cols)
@@ -280,20 +351,29 @@ function vimouse.drawGridInFrame(cols,rows,f)
     for j=1,cols do
       local x = f.x + (i-1) * width
       local y = f.y + (j-1) * height
-      local items = vimouse.createCell(x,y,width,height,i,j)
+      local items = vimouse.createCell(x,y,width,height,i,j,f)
       for _,item in ipairs(items) do
         table.insert(result, item)
       end
     end
   end
 
+  local pt = vimouse.getCenterOfScreen()
+  local size = 100
+  local txtRect = hs.geometry.rect(pt.x-size,pt.y-size,size*2,size*2)
+  local label = id
+  local monitorLabel = vimouse.textInRect(txtRect, label)
+  monitorLabel:setTextSize(200)
+  table.insert(result, monitorLabel)
+
   return result
 end
 
 function vimouse.textInRect(r,text)
-  local width = vimouse.divide(r.w,NUM_ROWS)
-  local height = vimouse.divide(r.h,NUM_COLS)
+  assert(r, "Bad text in rect call")
   local result = hs.drawing.text(r, text)
+  result:setTextColor(BASE_COLOR)
+  result:setTextStyle({alignment="center"})
 
   return result
 end
@@ -303,10 +383,10 @@ function vimouse.createGridForEachMonitor()
   grids = {}
 
   local screens=screen.allScreens()
-  for _,s in ipairs(screens) do
+  for index,s in ipairs(screens) do
     local f=s:fullFrame()
-    local sid = s:id()
-    local grid = vimouse.drawGridInFrame(NUM_COLS,NUM_ROWS,f)
+    local sid = index
+    local grid = vimouse.drawGridInFrame(sid, NUM_COLS,NUM_ROWS,f)
     table.insert(grids, grid)
   end
 end
@@ -315,22 +395,54 @@ function vimouse.deleteGridForEachMonitor()
   vimouse.deleteGrids(grids)
 end
 
-function vimouse.createCell(x,y,w,h,row,col)
+function vimouse.createCell(x,y,w,h,row,col,f)
+  --return vimouse.createCellUsingRect(x,y,w,h,row,col,f)
+  return vimouse.createCellUsingLines(x,y,w,h,row,col,f)
+end
+
+function vimouse.createCellUsingLines(x,y,w,h,row,col,f)
+    local result = {}
+    local ptTopLeft
+    local ptBottomRight
+
+    if (col == 1) then
+      ptTopLeft = {x=x, y=y}
+      ptBottomRight = {x=x, y=y+f.h}
+    end
+    if (row == 1) then
+      ptTopLeft = {x=x, y=y}
+      ptBottomRight = {x=x+f.w, y=y}
+    end
+
+    if (ptTopLeft ~= nil) then
+      local line = hs.drawing.line(ptTopLeft, ptBottomRight)
+      line:setStrokeColor(BASE_COLOR)
+      line:setStrokeWidth(1)
+      table.insert(result, line)
+    end
+
+    local txtRect = hs.geometry.rect(x,y+CELL_FONT_OFFSET,w,h)
+    assert(txtRect)
+    local label = string.char(65+row-1) .. string.char(65+col-1)
+    local txt = vimouse.textInRect(txtRect, label)
+    txt:setTextSize(CELL_FONT_SIZE)
+
+    table.insert(result, txt)
+
+    return result
+end
+
+function vimouse.createCellUsingRect(x,y,w,h,row,col)
     local r = hs.geometry.rect(x,y,w,h)
     local rect = hs.drawing.rectangle(r)
     rect:setStrokeColor({["red"]=1,["blue"]=0,["green"]=0,["alpha"]=1})
     rect:setFill(false)
     rect:setStrokeWidth(1)
 
-    local fontSize = 30
-    local verticalOffset = 25 
-    local txtRect = hs.geometry.rect(x,y+verticalOffset,w,h)
+    local txtRect = hs.geometry.rect(x,y+CELL_FONT_OFFSET,w,h)
     local label = string.char(65+row-1) .. string.char(65+col-1)
     local txt = vimouse.textInRect(txtRect, label)
-    txt:setTextColor({["red"]=1,["blue"]=0,["green"]=0,["alpha"]=1})
-    txt:setTextStyle({alignment="center"})
-    txt:setTextSize(fontSize)
-    txt:setAlpha(0.90)
+    txt:setTextSize(CELL_FONT_SIZE)
 
     local result = {}
     table.insert(result, rect)
@@ -368,10 +480,10 @@ function vimouse.refreshBigCursor()
     ptMouse = hs.mouse.getAbsolutePosition()
 
     -- Prepare a big red circle around the mouse pointer
-    local pt = {x=ptMouse.x-radius, y=ptMouse.y-radius}
+    local pt = {x=ptMouse.x-CURSOR_HIGHLIGHT_RADIUS, y=ptMouse.y-CURSOR_HIGHLIGHT_RADIUS}
     if (not vimouse.mouseCircle) then
-      vimouse.mouseCircle = hs.drawing.circle(hs.geometry.rect(pt.x, pt.y, radius*2, radius*2))
-      vimouse.mouseCircle:setStrokeColor({["red"]=1,["blue"]=0,["green"]=0,["alpha"]=1})
+      vimouse.mouseCircle = hs.drawing.circle(hs.geometry.rect(pt.x, pt.y, CURSOR_HIGHLIGHT_RADIUS*2, CURSOR_HIGHLIGHT_RADIUS*2))
+      vimouse.mouseCircle:setStrokeColor(BASE_COLOR)
       vimouse.mouseCircle:setFill(false)
       vimouse.mouseCircle:setStrokeWidth(7)
       vimouse.mouseCircle:show()
@@ -410,9 +522,12 @@ function vimouse.show()
 end
 
 function vimouse.drawImageGrid(cols,rows,r)
-  local path = "/tmp/download.png"
+  local screen = hs.mouse.getCurrentScreen()
+  local r = screen:fullFrame()
+  local path = "/tmp/grid1.pdf"
   local gridImage = hs.image.imageFromPath(path)
   local result = hs.drawing.image(r, gridImage)
+  result:show()
 
   return result;
 end

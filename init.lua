@@ -10,12 +10,15 @@ local NUM_ROWS = 10
 local NUM_COLS = 10
 local BASE_COLOR = {["red"]=1,["blue"]=0,["green"]=0,["alpha"]=1}
 
-local MOUSE_MOVE_BIG_DELTA = 40 
 local MOUSE_MOVE_SMALL_DELTA = 10
 local MOUSE_MOVE_MICRO_DELTA = 2
 local VIM_BIG_MODIFIER = {"ctrl"}
 local VIM_MICRO_MODIFIER = {"ctrl","shift"}
 local VIM_SMALL_MODIFIER = {"shift"}
+
+local VIM_BIG_MODIFER_DELTA = 4
+local VIM_SMALL_MODIFER_DELTA = 8
+local VIM_MICRO_MODIFER_DELTA = 16 
 
 local CELL_FONT_SIZE = 25 
 local CELL_FONT_OFFSET = 25 
@@ -161,16 +164,29 @@ bindGlobalRepeat(arrowModifier, "L", function()
 end)
 
 bindRepeat('H', VIM_MICRO_MODIFIER,  function()
-  vimouse.moveLeft(MOUSE_MOVE_MICRO_DELTA)
+  vimouse.moveLeft(vimouse.getCurrentScreenWidth() / VIM_MICRO_MODIFER_DELTA)
 end)
 bindRepeat('J', VIM_MICRO_MODIFIER,  function()
-  vimouse.moveDown(MOUSE_MOVE_MICRO_DELTA)
+  vimouse.moveDown(vimouse.getCurrentScreenHeight() / VIM_MICRO_MODIFER_DELTA)
 end)
 bindRepeat('K', VIM_MICRO_MODIFIER,  function()
-  vimouse.moveUp(MOUSE_MOVE_MICRO_DELTA)
+  vimouse.moveUp(vimouse.getCurrentScreenHeight() / VIM_MICRO_MODIFER_DELTA)
 end)
 bindRepeat('L', VIM_MICRO_MODIFIER,  function()
-  vimouse.moveRight(MOUSE_MOVE_MICRO_DELTA)
+  vimouse.moveRight(vimouse.getCurrentScreenWidth() / VIM_MICRO_MODIFER_DELTA)
+end)
+
+bindRepeat('H', VIM_SMALL_MODIFIER,  function()
+  vimouse.moveLeft(vimouse.getCurrentScreenWidth() / VIM_SMALL_MODIFER_DELTA)
+end)
+bindRepeat('J', VIM_SMALL_MODIFIER,  function()
+  vimouse.moveDown(vimouse.getCurrentScreenHeight() / VIM_SMALL_MODIFER_DELTA)
+end)
+bindRepeat('K', VIM_SMALL_MODIFIER,  function()
+  vimouse.moveUp(vimouse.getCurrentScreenHeight() / VIM_SMALL_MODIFER_DELTA)
+end)
+bindRepeat('L', VIM_SMALL_MODIFIER,  function()
+  vimouse.moveRight(vimouse.getCurrentScreenWidth() / VIM_SMALL_MODIFER_DELTA)
 end)
 
 KEYS:bind({"ctrl"}, "return", function()
@@ -191,29 +207,17 @@ end)
 bindRepeat('L', VIM_MICRO_MODIFIER,  function()
   vimouse.moveRight(MOUSE_MOVE_MICRO_DELTA)
 end)
-bindRepeat('H', VIM_SMALL_MODIFIER,  function()
-  vimouse.moveLeft(MOUSE_MOVE_SMALL_DELTA)
-end)
-bindRepeat('J', VIM_SMALL_MODIFIER,  function()
-  vimouse.moveDown(MOUSE_MOVE_SMALL_DELTA)
-end)
-bindRepeat('K', VIM_SMALL_MODIFIER,  function()
-  vimouse.moveUp(MOUSE_MOVE_SMALL_DELTA)
-end)
-bindRepeat('L', VIM_SMALL_MODIFIER,  function()
-  vimouse.moveRight(MOUSE_MOVE_SMALL_DELTA)
-end)
 bindRepeat('H', VIM_BIG_MODIFIER,  function()
-  vimouse.moveLeft(MOUSE_MOVE_BIG_DELTA)
+  vimouse.moveLeft(vimouse.getCurrentScreenWidth() / VIM_BIG_MODIFER_DELTA)
 end)
 bindRepeat('J', VIM_BIG_MODIFIER,  function()
-  vimouse.moveDown(MOUSE_MOVE_BIG_DELTA)
+  vimouse.moveDown(vimouse.getCurrentScreenHeight() / VIM_BIG_MODIFER_DELTA)
 end)
 bindRepeat('K', VIM_BIG_MODIFIER,  function()
-  vimouse.moveUp(MOUSE_MOVE_BIG_DELTA)
+  vimouse.moveUp(vimouse.getCurrentScreenHeight() / VIM_BIG_MODIFER_DELTA)
 end)
 bindRepeat('L', VIM_BIG_MODIFIER,  function()
-  vimouse.moveRight(MOUSE_MOVE_BIG_DELTA)
+  vimouse.moveRight(vimouse.getCurrentScreenWidth() / VIM_BIG_MODIFER_DELTA)
 end)
 
 function vimouse.executeLastPhrase()
@@ -284,7 +288,19 @@ function vimouse.processAction(data)
   vimouse.moveMouse(f.x + col*rectWidth + rectWidth/2, f.y + row*rectHeight + rectHeight / 2)
 end
 
-function vimouse.getCurrentScreenSize()
+function vimouse.getCurrentScreenHeight()
+  local size = vimouse.getCurrentScreenSize()
+  local result = size.h
+  return result
+end
+
+function vimouse.getCurrentScreenWidth()
+  local size = vimouse.getCurrentScreenSize()
+  local result = size.w
+  return result
+end
+
+function getCurrentScreenHeight()
 end
 
 function vimouse.getCurrentScreenSize()
@@ -296,8 +312,8 @@ function vimouse.getCurrentScreenSize()
   end 
 
   local f = s:fullFrame()
-  result.x = f.w / NUM_COLS
-  result.y = f.h / NUM_ROWS
+  result.w = f.w / NUM_COLS
+  result.h = f.h / NUM_ROWS
 
   return result
 end

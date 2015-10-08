@@ -1,31 +1,51 @@
+--[[
+    -- When switching monitors, move to the came cell as we were in (lastPhrase)
+    -- Display monitor # in the top middle of screen for a sec?
+-- save recent mouse move locations, display as circles, like heat map, colored for clicking with labels
+-- allow history navigation of mouse positions 
+-- Switch monitor focus to main app in monitor
+    -- Big Move moves in 1/3 of big grid size, so with 3 moves, you're always ending up on the center of a block.
+-- Swtich to monitor of the active window on show?
+    -- Double tap enter dismisses grid
+    -- Spacebar for scroll? and Shift_Spacebar for backscroll?
+    -- change grid to ascii or just lines or maybe other image type?
+    -- add right click
+--]]
+
+--require("luarocks.loader")
+--local pkg = require("luasocket")
+
 local screen = require 'hs.screen'
 local log = require'hs.logger'.new('vimouse')
 local grids = {}
 local monitorCues = {}
+local browsers = {}
 local phrase = ""
 local CURSOR_HIGHLIGHT_RADIUS = 60
 
 local vimouse = {}
-local NUM_ROWS = 10
-local NUM_COLS = 10
+local NUM_ROWS = 15
+local NUM_COLS = 15
 local BASE_COLOR = {["red"]=1,["blue"]=0,["green"]=0,["alpha"]=1}
+local CELL_FONT_SIZE = 25 
+local CELL_FONT_OFFSET = 20 
+
+local MONITOR_LABEL_FONT_SIZE = 200
+local MONITOR_CUE_TIMER_INTERVAL_IN_SECONDS = 5
+local MONITOR_LABEL_ALPHA = 0.5 
 
 local MOUSE_MOVE_SMALL_DELTA = 10
 local MOUSE_MOVE_MICRO_DELTA = 2
-local VIM_BIG_MODIFIER = {"ctrl"}
-local VIM_MICRO_MODIFIER = {"ctrl","shift"}
-local VIM_SMALL_MODIFIER = {"shift"}
+local VIM_BIG_MODIFIER = {"ctrl","shift"}
+local VIM_SMALL_MODIFIER = {"ctrl"}
+local VIM_MICRO_MODIFIER = {"shift"}
 
-local VIM_BIG_MODIFER_DELTA = 4
-local VIM_SMALL_MODIFER_DELTA = 8
-local VIM_MICRO_MODIFER_DELTA = 16 
-
-local CELL_FONT_SIZE = 25 
-local CELL_FONT_OFFSET = 25 
+local VIM_BIG_MODIFER_DELTA = 1
+local VIM_SMALL_MODIFER_DELTA = 8 
+local VIM_MICRO_MODIFER_DELTA = 16
 
 local SCROLL_DELTA = 50
 local SCROLL_MODE = 'pixel'
-local MONITOR_LABEL_FONT_SIZE = 200
 
 local lastAction = ''
 local lastPhrase = ''
@@ -58,11 +78,14 @@ end
 
 function track(action)
   lastAction = action
+  log.w("action:", action)
 end
 
 function vimouse.debug(msg)
-   --hs.alert.show(msg)
+   log.w(msg)
+   hs.alert.show(msg)
 end
+
 function vimouse.alert(msg)
     log.w(msg)
     hs.alert.show(msg)
@@ -112,15 +135,17 @@ KEYS:bind({""}, "return", function()
   end
 
   hs.eventtap.leftClick(ptMouse)
+  vimouse.showControlType()
+
   vimouse.debug("RETURN")
   track("leftclick")
 end)
 
 -- bind return or enter key to right click
-KEYS:bind({"ctrl"}, "return", function()
+KEYS:bind({"shift"}, "return", function()
+  track("rightclick")
   local ptMouse = hs.mouse.getAbsolutePosition()
   hs.eventtap.rightClick(ptMouse)
-  track("rightclick")
   vimouse.debug("RETURN")
 end)
 
@@ -220,6 +245,81 @@ bindRepeat('L', VIM_BIG_MODIFIER,  function()
   vimouse.moveRight(vimouse.getCurrentScreenWidth() / VIM_BIG_MODIFER_DELTA)
 end)
 
+bindRepeat('R', VIM_BIG_MODIFIER,  function()
+  vimouse.showBrowser()
+end)
+bindRepeat('T', VIM_BIG_MODIFIER,  function()
+  vimouse.deleteBrowsers()
+end)
+
+function vimouse.deleteItems(items)
+  for index,item in ipairs(items) do
+    item:delete()
+  end
+end
+
+function vimouse.deleteBrowsers()
+  vimouse.deleteItems(browsers)
+  browsers = {}
+end
+
+function vimouse.showBrowser()
+  local rect = hs.geometry.rect(-100, -100, 500, 500)
+  local wv = hs.webview.new(rect)
+  local url = "http://www.hammerspoon.org/docs/hs.webview.html#new"
+  url = "file:///Users/bparks/gitrepos/genie/demo/index.html"
+  url = "file:///db/vimouse/test.html"
+  url = "file:///Users/bparks/gitrepos/atom_examples/bap1/paper/grid.html"
+
+  wv:url(url)
+
+  --[[
+  local mask = {borderless = true, utility = true, titled = true}
+  mask.borderless = false
+  mask.utility = true
+  mask.titled = true
+  wv:windowStyle(mask)
+  --]]
+
+  wv:show()
+  table.insert(browsers,wv)
+
+  --wv:asHSDrawing():setFrame(hs.geometry.rect(-100, -100, 100, 200))
+end
+
+function vimouse.showBrowserCircle()
+  local rect = hs.geometry.rect(-100, -100, 100, 200)
+  local mouseCircle = hs.drawing.circle(rect)
+  local BASE_COLOR = {["red"]=1,["blue"]=0,["green"]=0,["alpha"]=1}
+
+  mouseCircle:setStrokeColor(BASE_COLOR)
+  mouseCircle:setFill(false)
+  mouseCircle:setStrokeWidth(7)
+  mouseCircle:show()
+end
+
+function vimouse.showBrowserOldd()
+  local width = 400
+  local height = 200
+  log.w("showbrowser")
+  local s = vimouse.getCurrentScreen()
+  log.w("showbrowser.1", s)
+
+  --local rect = vimouse.getRectInCenterOfScreen(width,height,s)
+  local rect = hs.geometry.rect(0, 0, 100, 200)
+  log.w("showbrowser.2", rect)
+  --log.w("RECT:", rect)
+  local wv = hs.webview.new(rect)
+  --log.w("wv:", wv)
+  local url = "file:///db/vimouse/dialog.html"
+  --log.w("pwd:", hs.fs.currentDir())
+  wv:url(url)
+  wv:show()
+  table.insert(browsers,wv)
+
+  return wv
+end
+
 function vimouse.executeLastPhrase()
   if (vimouse.validPhrase(lastPhrase)) then
     vimouse.processAction(lastPhrase)
@@ -233,10 +333,34 @@ function vimouse.switchToMonitor(num)
   vimouse.executeLastPhrase()
 end
 
-function vimouse.getCenterOfScreen(s)
-  if (s == nil) then
-    s = hs.mouse.getCurrentScreen()
+function vimouse.getRectInCenterOfScreen(width,height,s)
+  local pt = vimouse.getCenterOfScreen(s)
+  local result = hs.geometry.rect(pt.x - width/2,pt.y - height/2,width,height)
+
+  return result
+end
+
+function vimouse.getCurrentScreen(s)
+  if s ~= nil then
+    return s
   end
+
+  local result = hs.mouse.getCurrentScreen()
+  if (result ~= nil) then
+    return result
+  end
+
+  result = hs.screen.mainScreen()
+  if (result ~= nil) then
+    return result
+  end
+
+  result = hs.screen.primaryScreen()
+  return result
+end
+
+function vimouse.getCenterOfScreen(s)
+  s = vimouse.getCurrentScreen(s)
 
   local f = s:fullFrame()
   local x = f.x + f.w/2
@@ -272,13 +396,14 @@ function vimouse.processAction(data)
   local row = string.byte(char2) - 65
 
   if (char1 == "M") then
+    vimouse.setMonitorCueVisibility(false)
     vimouse.switchToMonitor(char2)
     return
   end
 
   vimouse.debug("JUMP " .. data) 
 
-  local s = hs.mouse.getCurrentScreen()
+  local s = vimouse.getCurrentScreen()
   local f = s:fullFrame()
   local rectWidth = (f.w / NUM_COLS)
   local rectHeight = (f.h / NUM_ROWS)
@@ -306,7 +431,7 @@ end
 function vimouse.getCurrentScreenSize()
   local result = {}
 
-  local s = hs.mouse.getCurrentScreen()
+  local s = vimouse.getCurrentScreen()
   if (s == nil) then
     return
   end 
@@ -328,6 +453,8 @@ function vimouse.processKey(key)
     vimouse.alert("ACTION " .. phrase) 
     vimouse.processAction(phrase)
     phrase = ""
+  elseif string.len(phrase) == 1 and key == "M" then
+    vimouse.setMonitorCueVisibility(true)
   else
     refreshClearPhrase()
   end
@@ -452,9 +579,11 @@ function vimouse.createMonitorCue(s, index)
   local pt = vimouse.getCenterOfScreen(s)
   local size = 100
   local txtRect = hs.geometry.rect(pt.x-size,pt.y-size,size*2,size*2)
+  --log.w("MONITOR CUE AT:", toCSV(txtRect))
   local label = index
   local monitorLabel = vimouse.textInRect(txtRect, label)
   monitorLabel:setTextSize(MONITOR_LABEL_FONT_SIZE)
+  monitorLabel:setAlpha(MONITOR_LABEL_ALPHA)
 
   table.insert(monitorCues, monitorLabel)
 end
@@ -540,6 +669,7 @@ end
 function vimouse.moveMouse(x,y,hilightCursor)
     local ptMouse = {x=x, y=y}
     hs.mouse.setAbsolutePosition(ptMouse)
+    log.w("mouse pos:", toCSV(ptMouse))
     if (hilightCursor == nil) or (hilightCursor) then
       vimouse.refreshBigCursor()
     end
@@ -589,8 +719,24 @@ function vimouse.refreshBigCursor()
     end)
 end
 
+function vimouse.clearMonitorCueTimer()
+  if vimouse.monitorCueTimer then
+      vimouse.monitorCueTimer:stop()
+  end
+end
+
+function vimouse.showControlType()
+  --[[
+  local i = hs.uielement:role()
+  local msg = "Control type:" .. i
+  log.w(msg)
+  vimouse.alert(msg)
+  --]]
+end
+
 function vimouse.initMonitorCueTimer()
-  vimouse.monitorCueTimer  = hs.timer.doAfter(1, function() 
+  vimouse:clearMonitorCueTimer()
+  vimouse.monitorCueTimer  = hs.timer.doAfter(MONITOR_CUE_TIMER_INTERVAL_IN_SECONDS, function() 
     vimouse.setMonitorCueVisibility(false)
     vimouse.monitorCueTimer = nil
   end)
@@ -629,7 +775,7 @@ end
 
 
 function vimouse.drawImageGrid(cols,rows,r)
-  local screen = hs.mouse.getCurrentScreen()
+  local screen = vimouse.getCurrentScreen()
   local r = screen:fullFrame()
   local path = "/tmp/grid1.pdf"
   local gridImage = hs.image.imageFromPath(path)
@@ -643,5 +789,7 @@ end
 vimouse.bindKeys()
 startWatchingForMonitorChanges()
 vimouse.recreateGridsForEachMonitor()
+--vimouse.showBrowser()
+--vimouse.showBrowserCircle()
 
 return vimouse

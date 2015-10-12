@@ -24,8 +24,8 @@ local phrase = ""
 local CURSOR_HIGHLIGHT_RADIUS = 60
 
 local vimouse = {}
-local NUM_ROWS = 15
-local NUM_COLS = 15
+local NUM_ROWS = 12
+local NUM_COLS = 12
 local BASE_COLOR = {["red"]=1,["blue"]=0,["green"]=0,["alpha"]=1}
 local CELL_FONT_SIZE = 25 
 local CELL_FONT_OFFSET = 20 
@@ -590,7 +590,7 @@ end
 
 function vimouse.textInRect(r,text)
   assert(r, "Bad text in rect call")
-  local result = hs.drawing.text(r, text)
+  local result = hs.drawing.text(r, '' .. text)
   result:setTextColor(BASE_COLOR)
   result:setTextStyle({alignment="center"})
 

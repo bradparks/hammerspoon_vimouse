@@ -1,19 +1,27 @@
 --[[
-    -- When switching monitors, move to the came cell as we were in (lastPhrase)
-    -- Display monitor # in the top middle of screen for a sec?
 -- save recent mouse move locations, display as circles, like heat map, colored for clicking with labels
 -- allow history navigation of mouse positions 
--- Switch monitor focus to main app in monitor
+    -- When switching monitors, move to the came cell as we were in (lastPhrase)
+    -- Display monitor # in the top middle of screen for a sec?
+    -- Switch monitor focus to main app in monitor
     -- Big Move moves in 1/3 of big grid size, so with 3 moves, you're always ending up on the center of a block.
--- Swtich to monitor of the active window on show?
+    -- Swtich to monitor of the active window on show?
     -- Double tap enter dismisses grid
     -- Spacebar for scroll? and Shift_Spacebar for backscroll?
     -- change grid to ascii or just lines or maybe other image type?
     -- add right click
+    --
+    --
+local fadeTween = tween.new(2, properties, {bgcolor = {0,0,0}, fgcolor={255,0,0}}, 'linear')
+fadeTween:update(dt)
 --]]
+
 
 --require("luarocks.loader")
 --local pkg = require("luasocket")
+
+local tween = require 'vimouse/tween'
+
 
 local screen = require 'hs.screen'
 local log = require'hs.logger'.new('vimouse')
@@ -24,11 +32,11 @@ local phrase = ""
 local CURSOR_HIGHLIGHT_RADIUS = 60
 
 local vimouse = {}
-local NUM_ROWS = 12
-local NUM_COLS = 12
+local NUM_ROWS = 10
+local NUM_COLS = 10
 local BASE_COLOR = {["red"]=1,["blue"]=0,["green"]=0,["alpha"]=1}
 local CELL_FONT_SIZE = 25 
-local CELL_FONT_OFFSET = 20 
+local CELL_FONT_OFFSET = 19 
 
 local MONITOR_LABEL_FONT_SIZE = 200
 local MONITOR_CUE_TIMER_INTERVAL_IN_SECONDS = 5
@@ -81,14 +89,20 @@ function track(action)
   log.w("action:", action)
 end
 
-function vimouse.debug(msg)
+function vimouse.debug(msg, more)
    log.w(msg)
    hs.alert.show(msg)
+   if more ~= nil then
+      hs.notify.new({title="VIMouse", informativeText=msg}):send()
+   end
 end
 
-function vimouse.alert(msg)
+function vimouse.alert(msg, more)
     log.w(msg)
     hs.alert.show(msg)
+    if more ~= nil then
+      hs.notify.new({title="VIMouse", informativeText=msg}):send()
+    end
 end
 
 function onKeyPress(modifiers,event,c,d,e,f,g)
@@ -98,7 +112,7 @@ end
 
 function startWatchingForMonitorChanges()
   local screenWatcher = hs.screen.watcher.new(function()
-    vimouse.debug('RESOLUTION changed') 
+    vimouse.debug('RESOLUTION changed', true) 
     vimouse.recreateGridsForEachMonitor()
   end)
   screenWatcher:start()
@@ -135,10 +149,14 @@ KEYS:bind({""}, "return", function()
   end
 
   hs.eventtap.leftClick(ptMouse)
-  vimouse.showControlType()
 
   vimouse.debug("RETURN")
   track("leftclick")
+
+  if (vimouse.textFieldIsSelected()) then
+    vimouse.toggle()
+    return
+  end
 end)
 
 -- bind return or enter key to right click
@@ -264,22 +282,22 @@ function vimouse.deleteBrowsers()
 end
 
 function vimouse.showBrowser()
-  local rect = hs.geometry.rect(-100, -100, 500, 500)
+  local rect = hs.geometry.rect(-500, -500, 500, 500)
   local wv = hs.webview.new(rect)
   local url = "http://www.hammerspoon.org/docs/hs.webview.html#new"
   url = "file:///Users/bparks/gitrepos/genie/demo/index.html"
   url = "file:///db/vimouse/test.html"
   url = "file:///Users/bparks/gitrepos/atom_examples/bap1/paper/grid.html"
+  url = "http://www.hammerspoon.org/docs/hs.webview.html#new"
 
   wv:url(url)
 
-  --[[
-  local mask = {borderless = true, utility = true, titled = true}
+
+  local mask = {borderless = true, utility = false, titled = true}
   mask.borderless = false
-  mask.utility = true
+  mask.utility = false
   mask.titled = true
   wv:windowStyle(mask)
-  --]]
 
   wv:show()
   table.insert(browsers,wv)
@@ -323,14 +341,19 @@ end
 function vimouse.executeLastPhrase()
   if (vimouse.validPhrase(lastPhrase)) then
     vimouse.processAction(lastPhrase)
+    return true
   else
-    vimouse.switchToCenterOfMonitor(num)
+    vimouse.switchToCenterOfMonitor()
   end
+
+  return false
 end
 
 function vimouse.switchToMonitor(num)
-  vimouse.switchToCenterOfMonitor(num)
-  vimouse.executeLastPhrase()
+  vimouse.switchToCenterOfMonitor(num, false)
+  if not vimouse.executeLastPhrase() then
+      vimouse.refreshBigCursor()
+  end
 end
 
 function vimouse.getRectInCenterOfScreen(width,height,s)
@@ -396,8 +419,8 @@ function vimouse.processAction(data)
   local row = string.byte(char2) - 65
 
   if (char1 == "M") then
-    vimouse.setMonitorCueVisibility(false)
     vimouse.switchToMonitor(char2)
+    vimouse.setMonitorCueVisibility(false)
     return
   end
 
@@ -410,7 +433,7 @@ function vimouse.processAction(data)
 
   lastPhrase = data
 
-  vimouse.moveMouse(f.x + col*rectWidth + rectWidth/2, f.y + row*rectHeight + rectHeight / 2)
+  vimouse.moveMouse(f.x + col*rectWidth + rectWidth/2, f.y + row*rectHeight + rectHeight/2 - CELL_FONT_OFFSET)
 end
 
 function vimouse.getCurrentScreenHeight()
@@ -479,6 +502,63 @@ vimouse.monitorCueTimer = nil
 vimouse.clearPhraseTimer = nil
 vimouse.gridVisible = true
 
+function vimouse.getScreenForMonitor(num)
+    local screens=screen.allScreens()
+    local s = screens[num]
+    return s
+end
+
+function vimouse.getMonitorForWindow(win)
+  local screens=screen.allScreens()
+  for index,s in ipairs(screens) do
+    if (s == win:screen()) then
+      return index
+    end
+  end
+
+  return nil
+end
+
+function vimouse.getFocusedMonitorNumber()
+  local w = hs.window.frontmostWindow()
+  if (w ~= nil) then
+    local result = vimouse.getMonitorForWindow(w)
+    return result
+  end
+  return nil
+end
+
+function vimouse.textFieldIsSelected()
+    local e = hs.uielement.focusedElement()
+    if (e == nil) then
+      log.w("no ui element focused")
+      return false
+    end
+
+    local role = e:role()
+    log.w("ui element:" .. role)
+    if (string.find(role, "TextField") ~= nil) then
+      return true
+    end
+    if (string.find(role, "TextArea") ~= nil) then
+      return true
+    end
+
+    return false
+end
+
+function vimouse.info()
+  local w = hs.window.frontmostWindow()
+  if (w ~= nil) then
+    local monitorNumber = vimouse.getMonitorForWindow(w)
+    --vimouse.alert(w:title() .. "." .. monitorNumber)
+    local e = hs.uielement.focusedElement()
+    if (e ~= nil) then
+      log.w("focused element", e:role(), vimouse.textFieldIsSelected())
+    end
+  end
+end
+
 function vimouse.toggle()
   lastAction = ""
 
@@ -487,6 +567,7 @@ function vimouse.toggle()
   else
     hs.vimouse.hide()
   end
+  vimouse.info()
 
   vimouse.gridVisible = not vimouse.gridVisible
 end
@@ -725,15 +806,6 @@ function vimouse.clearMonitorCueTimer()
   end
 end
 
-function vimouse.showControlType()
-  --[[
-  local i = hs.uielement:role()
-  local msg = "Control type:" .. i
-  log.w(msg)
-  vimouse.alert(msg)
-  --]]
-end
-
 function vimouse.initMonitorCueTimer()
   vimouse:clearMonitorCueTimer()
   vimouse.monitorCueTimer  = hs.timer.doAfter(MONITOR_CUE_TIMER_INTERVAL_IN_SECONDS, function() 
@@ -757,11 +829,21 @@ function vimouse.saveSettings()
   hs.settings.set("grix_y", y)
 end
 
+function vimouse.switchToActiveMonitor()
+  local num = vimouse.getFocusedMonitorNumber()
+  if (num ~= nil) then
+    vimouse.switchToMonitor(num)
+    return true
+  end
+  return false
+end
+
 function vimouse.show()
     KEYS:enter()
     vimouse.doHide()
     vimouse.toggleGridVisibility(grids, true)
 
+    vimouse.switchToActiveMonitor()
     vimouse.setMonitorCueVisibility(true)
     vimouse.refreshBigCursor()
     vimouse.initMonitorCueTimer()
@@ -784,6 +866,17 @@ function vimouse.drawImageGrid(cols,rows,r)
 
   return result;
 end
+
+--[[
+function vimouse.testTween()
+local properties = {}
+local fadeTween = tween.new(2, properties, {bgcolor = {0,0,0}, fgcolor={255,0,0}}, 'linear')
+fadeTween:update(dt)
+    vimouse.mouseCircleTimer = hs.timer.doAfter(1, function() 
+      vimouse.hideBigCursor()
+    end)
+end
+]]--
 
 --vimouse.drawImageGrid()
 vimouse.bindKeys()

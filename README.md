@@ -1,5 +1,7 @@
 # hammerspoon_vimouse
 WORK IN PROGRESS: Move your mouse with your keyboard, using vi keystrokes and a visual grid
+This requires the free, opensource [Hammerspoon](https://www.hammerspoon.org/)
+
 
 ![](vimouse.png)
 To use, save this repo to your hammerspoon extensions in a folder named `vimouse`. This is non standard, but is the way I did this when I originaly wrote it, and haven't fixed it yet ;-)

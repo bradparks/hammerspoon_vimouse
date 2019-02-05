@@ -20,23 +20,26 @@ fadeTween:update(dt)
 --require("luarocks.loader")
 --local pkg = require("luasocket")
 
--- local tween = require 'vimouse/tween'
+--local tween = require 'vimouse/tween'
+--local graph = require("graphpaper")
 
+local NUM_ROWS = 10 
+local NUM_COLS = 10 
 
 local screen = require 'hs.screen'
 local log = require'hs.logger'.new('vimouse')
+--local console = require("hs._asm.console")
 local grids = {}
+local mouseCues = {}
 local monitorCues = {}
 local browsers = {}
 local phrase = ""
 local CURSOR_HIGHLIGHT_RADIUS = 60
 
 local vimouse = {}
-local NUM_ROWS = 10
-local NUM_COLS = 10
 local BASE_COLOR = {["red"]=1,["blue"]=0,["green"]=0,["alpha"]=1}
 local CELL_FONT_SIZE = 25 
-local CELL_FONT_OFFSET = 19 
+local CELL_FONT_OFFSET = 0 
 
 local MONITOR_LABEL_FONT_SIZE = 200
 local MONITOR_CUE_TIMER_INTERVAL_IN_SECONDS = 5
@@ -57,6 +60,7 @@ local SCROLL_MODE = 'pixel'
 
 local lastAction = ''
 local lastPhrase = ''
+local wantsDismissOnDoubleEnter = false
 
 function isMissing(v)
   return not isDefined(v)
@@ -75,22 +79,47 @@ function isDefined(v)
   return true
 end
 
+function vimouse.w(msg,a,b,c,d,e)
+  if (e ~= nil) then
+    log.w(msg,a,b,c,d,e)
+  elseif (d ~= nil) then
+    log.w(msg,a,b,c,d)
+  elseif (c ~= nil) then
+    log.w(msg,a,b,c)
+  elseif (b ~= nil) then
+    log.w(msg,a,b)
+  elseif (a ~= nil) then
+    log.w(msg,a)
+  else 
+    log.w(msg)
+  end
+end
+
 function vimouse.validPhrase(p)
+  if (p == nil) then
+    return false
+  end
+  local result = string.len(p) >= 1
+  return result
+  --[[
   local v = p
   if (p == nil) then
     p = phrase
   end 
   local result = string.len(p) == 2
   return result
+  --]]
 end
 
 function track(action)
   lastAction = action
-  log.w("action:", action)
+  if (action == "leftclick" or action == "rightclick") then
+    -- vimouse.debug("action:" .. action)
+  end
 end
 
 function vimouse.debug(msg, more)
-   log.w(msg)
+   vimouse.w(msg)
    hs.alert.show(msg)
    if more ~= nil then
       hs.notify.new({title="VIMouse", informativeText=msg}):send()
@@ -98,7 +127,7 @@ function vimouse.debug(msg, more)
 end
 
 function vimouse.alert(msg, more)
-    log.w(msg)
+    vimouse.w(msg)
     hs.alert.show(msg)
     if more ~= nil then
       hs.notify.new({title="VIMouse", informativeText=msg}):send()
@@ -112,7 +141,6 @@ end
 
 function startWatchingForMonitorChanges()
   local screenWatcher = hs.screen.watcher.new(function()
-    vimouse.debug('RESOLUTION changed', true) 
     vimouse.recreateGridsForEachMonitor()
   end)
   screenWatcher:start()
@@ -123,6 +151,18 @@ function toCSV (tt)
 end
 
 KEYS = hs.hotkey.modal.new()
+function vimouse.moveNE(delta) 
+  vimouse.moveMouseDelta(1,-1,delta)
+end
+function vimouse.moveSE(delta) 
+  vimouse.moveMouseDelta(1,1,delta)
+end
+function vimouse.moveSW(delta) 
+  vimouse.moveMouseDelta(-1,1,delta)
+end
+function vimouse.moveNW(delta) 
+  vimouse.moveMouseDelta(-1,-1,delta)
+end
 function vimouse.moveLeft(delta) 
   vimouse.moveMouseDelta(-1,0,delta)
 end
@@ -136,53 +176,84 @@ function vimouse.moveRight(delta)
   vimouse.moveMouseDelta(1,0,delta)
 end
 
+function vimouse.dismissIfDoubleEnter()
+  if (not wantsDismissOnDoubleEnter) then
+    return false
+  end
+
+  if (lastAction == "leftclick") then
+    vimouse.toggle()
+    return true
+  end
+
+  return false
+end
+
 function bindRepeat(key, modifier, callback)
   KEYS:bind(modifier, key, callback, nil, callback)
 end
 
--- bind return or enter key to click
-KEYS:bind({""}, "return", function()
-  local ptMouse = hs.mouse.getAbsolutePosition()
-  if (lastAction == "leftclick") then
-    vimouse.toggle()
-    return
-  end
-
-  hs.eventtap.leftClick(ptMouse)
-
-  vimouse.debug("RETURN")
+function vimouse.click()
   track("leftclick")
-
+  local ptMouse = hs.mouse.getAbsolutePosition()
+  hs.eventtap.leftClick(ptMouse)
   if (vimouse.textFieldIsSelected()) then
     vimouse.toggle()
-    return
+    return true
   end
-end)
+  return false
+end
 
--- bind return or enter key to right click
-KEYS:bind({"shift"}, "return", function()
+function vimouse.rightClick()
   track("rightclick")
   local ptMouse = hs.mouse.getAbsolutePosition()
   hs.eventtap.rightClick(ptMouse)
-  vimouse.debug("RETURN")
+end
+
+-- click bind return or enter key to click
+KEYS:bind({"ctrl"}, "return", function()
+  if (vimouse.dismissIfDoubleEnter()) then
+    return
+  end
+
+  vimouse.click()
 end)
 
-function scrollDown()
-  vimouse.debug("scroll down")
-  local offsets = {horizontal=0, vertical=SCROLL_DELTA} 
-  hs.eventtap.scrollWheel(offsets, {}, unit, SCROLL_MODE) 
+KEYS:bind({"shift"}, "return", function()
+  local keys = {cmd=true}
+  vimouse.leftClickWithModifiers(keys)
+end)
+
+hs.hotkey.bind({"alt"}, "return", function()
+  vimouse.rightClick();
+end)
+
+-- bind return or enter key to right click
+function vimouse.leftClickWithModifiers(keys)
+  local ptMouse = hs.mouse.getAbsolutePosition()
+  local types = hs.eventtap.event.types
+  hs.eventtap.event.newMouseEvent(types.leftMouseDown, ptMouse, keys):post()
+  hs.eventtap.event.newMouseEvent(types.leftMouseUp, ptMouse, keys):post()
 end
 
-function scrollUp()
-  vimouse.debug("scroll up")
-  local offsets = {horizontal=0, vertical=SCROLL_DELTA} 
-  hs.eventtap.scrollWheel(offsets, {}, unit, SCROLL_MODE) 
-end
+--[[
+KEYS:bind({"cmd"}, "return", function()
+  vimouse.rightClick()
+end)
+--]]
 
 -- Bind arrow keys
 function bindGlobalRepeat(modifier, key, callback)
   hs.hotkey.bind(modifier, key, callback, nil, callback)
 end
+
+local pageUpDownModifier1  = {"ctrl"}
+bindGlobalRepeat(pageUpDownModifier1, "F", function()
+  onKeyPress({}, "pagedown")
+end)
+bindGlobalRepeat(pageUpDownModifier1, "B", function()
+  onKeyPress({}, "pageup")
+end)
 
 local pageUpDownModifier = {"alt","shift"}
 bindGlobalRepeat(pageUpDownModifier, "J", function()
@@ -192,7 +263,7 @@ bindGlobalRepeat(pageUpDownModifier, "K", function()
   onKeyPress({}, "pageup")
 end)
 
-local arrowModifier = {"alt"}
+local arrowModifier = {"ctrl"}
 bindGlobalRepeat(arrowModifier, "H", function()
   onKeyPress({}, "left")
 end)
@@ -232,12 +303,6 @@ bindRepeat('L', VIM_SMALL_MODIFIER,  function()
   vimouse.moveRight(vimouse.getCurrentScreenWidth() / VIM_SMALL_MODIFER_DELTA)
 end)
 
-KEYS:bind({"ctrl"}, "return", function()
-  scrollDown()
-end)
-KEYS:bind({"ctrl","shift"}, "return", function()
-  scrollUp()
-end)
 bindRepeat('H', VIM_MICRO_MODIFIER,  function()
   vimouse.moveLeft(MOUSE_MOVE_MICRO_DELTA)
 end)
@@ -305,32 +370,21 @@ function vimouse.showBrowser()
   --wv:asHSDrawing():setFrame(hs.geometry.rect(-100, -100, 100, 200))
 end
 
-function vimouse.showBrowserCircle()
-  local rect = hs.geometry.rect(-100, -100, 100, 200)
-  local mouseCircle = hs.drawing.circle(rect)
-  local BASE_COLOR = {["red"]=1,["blue"]=0,["green"]=0,["alpha"]=1}
-
-  mouseCircle:setStrokeColor(BASE_COLOR)
-  mouseCircle:setFill(false)
-  mouseCircle:setStrokeWidth(7)
-  mouseCircle:show()
-end
-
 function vimouse.showBrowserOldd()
   local width = 400
   local height = 200
-  log.w("showbrowser")
+  vimouse.w("showbrowser")
   local s = vimouse.getCurrentScreen()
-  log.w("showbrowser.1", s)
+  vimouse.w("showbrowser.1", s)
 
   --local rect = vimouse.getRectInCenterOfScreen(width,height,s)
   local rect = hs.geometry.rect(0, 0, 100, 200)
-  log.w("showbrowser.2", rect)
-  --log.w("RECT:", rect)
+  vimouse.w("showbrowser.2", rect)
+  --vimouse.w("RECT:", rect)
   local wv = hs.webview.new(rect)
-  --log.w("wv:", wv)
+  --vimouse.w("wv:", wv)
   local url = "file:///db/vimouse/dialog.html"
-  --log.w("pwd:", hs.fs.currentDir())
+  --vimouse.w("pwd:", hs.fs.currentDir())
   wv:url(url)
   wv:show()
   table.insert(browsers,wv)
@@ -350,10 +404,14 @@ function vimouse.executeLastPhrase()
 end
 
 function vimouse.switchToMonitor(num)
+  vimouse.setMouseCueVisibility(false)
   vimouse.switchToCenterOfMonitor(num, false)
+  vimouse.refreshMouseCueSizes()
+
   if not vimouse.executeLastPhrase() then
       vimouse.refreshBigCursor()
   end
+  vimouse.setMouseCueVisibility(true)
 end
 
 function vimouse.getRectInCenterOfScreen(width,height,s)
@@ -413,25 +471,137 @@ function vimouse.switchToCenterOfMonitor(num, hilightCursor)
 end
 
 function vimouse.processAction(data)
+  local has2chars = string.len(data) == 2
   local char1 = string.sub(data,1,1)
-  local char2 = string.sub(data,2,2)
-  local col = string.byte(char1) - 65
-  local row = string.byte(char2) - 65
 
-  if (char1 == "M") then
-    vimouse.switchToMonitor(char2)
-    vimouse.setMonitorCueVisibility(false)
-    return
+  if (has2chars) then
+    log.w('has 2 chars')
+    local char2 = string.sub(data,2,2)
+    if (char1 == "M") then
+      vimouse.switchToMonitor(char2)
+      vimouse.setMonitorCueVisibility(false)
+      return true
+    end
+
+    local jumpTo = vimouse.getJumpTo(data, char1, char2)
+    if (jumpTo.success) then
+      lastPhrase = data
+      vimouse.jumpTo(jumpTo)
+      return true
+    end
+
+    return false
   end
 
-  vimouse.debug("JUMP " .. data) 
+  local jumpToChild = vimouse.getJumpToChild(data, char1)
+  if (jumpToChild.success) then
+    vimouse.jumpToChild(jumpToChild)
+    return true
+  end
+
+  return false
+end
+
+function tern( cond , T , F )
+      if cond then return T else return F end
+end
+
+function vimouse.getDeltaFromIndex(index)
+  if (index == 0) then
+    return -1
+  end
+  if (index == 1) then
+    return 0 
+  end
+  return 1
+end
+
+function vimouse.jumpToChildMoveInDirection(jumpTo)
+  local r = vimouse.getMouseRect()
+  local cellWidth = r.w / 3 / 8
+  local cellHeight = r.h / 3 / 8
+
+  local pt = hs.mouse.getAbsolutePosition()
+  local deltaY = vimouse.getDeltaFromIndex(jumpTo.row)
+  local deltaX = vimouse.getDeltaFromIndex(jumpTo.col)
+
+  pt.x = pt.x + (cellWidth * deltaX)
+  pt.y = pt.y + (cellHeight * deltaY)
+
+  hs.mouse.setAbsolutePosition(pt)
+  vimouse.refreshBigCursor()
+
+  log.w("jumpToChild:",toCSV(jumpTo), deltaX, deltaY, toCSV(pt))
+end
+
+function vimouse.jumpToChild(jumpTo)
+  vimouse.jumpToChildAbsolutePosition(jumpTo)
+end
+
+function vimouse.jumpToChildAbsolutePosition(jumpTo)
+  local r = vimouse.getMouseRect()
+  local cellWidth = r.w / 3 
+  local cellHeight = r.h / 3
+
+  local pt = hs.mouse.getAbsolutePosition()
+  local deltaY = vimouse.getDeltaFromIndex(jumpTo.row)
+  local deltaX = vimouse.getDeltaFromIndex(jumpTo.col)
+
+  pt.x = pt.x + (cellWidth * deltaX)
+  pt.y = pt.y + (cellHeight * deltaY)
+
+  hs.mouse.setAbsolutePosition(pt)
+  vimouse.refreshBigCursor()
+
+  log.w("jumpToChild:",toCSV(jumpTo), deltaX, deltaY, toCSV(pt))
+end
+
+function vimouse.getJumpToChild(data, char1, char2)
+  local result = {}
+  local chars = "QWEASDZXC"
+  local index = string.find(chars, char1)
+  result.success = (index ~= nil)
+  if (result.success) then
+    index = index - 1
+    result.col = index % 3
+    result.row = math.floor(index / 3)
+  end
+  return result
+end
+
+function vimouse.getJumpTo(data, char1, char2)
+  local result = {}
+  local chars 
+
+  --[[
+  char = 'bceghijklnopqrtuvwxyz'
+  char = 'abcdefghijklmnopqrstuvwxyz'
+  char = string.sub('bfghijklnoprtuvy', x, x+1);
+  ]]--
+
+  chars = "BFGHIJKLNOPRTUVY"
+  chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  chars = "BFGHIJKLNOPRTUVY"
+  result.col = string.find(chars, char1);
+  result.row = string.find(chars, char2);
+  result.success = (result.col ~= nil) and (result.row ~= nil)
+  if (result.success) then
+    result.row = result.row - 1
+    result.col = result.col - 1
+  end
+  log.w("jumpto", result.success, result.row, result.col, char1, char2)
+
+  return result
+end
+
+function vimouse.jumpTo(jumpTo)
+  local col = jumpTo.col
+  local row = jumpTo.row
 
   local s = vimouse.getCurrentScreen()
   local f = s:fullFrame()
   local rectWidth = (f.w / NUM_COLS)
   local rectHeight = (f.h / NUM_ROWS)
-
-  lastPhrase = data
 
   vimouse.moveMouse(f.x + col*rectWidth + rectWidth/2, f.y + row*rectHeight + rectHeight/2 - CELL_FONT_OFFSET)
 end
@@ -470,13 +640,13 @@ function vimouse.processKey(key)
   track(key)
 
   phrase = phrase .. key
-  vimouse.alert("Pressed " .. key) 
 
-  if vimouse.validPhrase(phrase) then
-    vimouse.alert("ACTION " .. phrase) 
-    vimouse.processAction(phrase)
-    phrase = ""
-  elseif string.len(phrase) == 1 and key == "M" then
+  local phraseLength = string.len(phrase) 
+  if (vimouse.processAction(phrase)) then
+    vimouse.clearPhrase()
+  elseif phraseLength >= 3 then
+    vimouse.clearPhrase()
+  elseif phraseLength == 1 and key == "M" then
     vimouse.setMonitorCueVisibility(true)
   else
     refreshClearPhrase()
@@ -508,6 +678,17 @@ function vimouse.getScreenForMonitor(num)
     return s
 end
 
+function vimouse.getMonitorForScreen(targetScreen)
+  local screens=screen.allScreens()
+  for index,s in ipairs(screens) do
+    if (s == targetScreen) then
+      return index
+    end
+  end
+
+  return nil
+end
+
 function vimouse.getMonitorForWindow(win)
   local screens=screen.allScreens()
   for index,s in ipairs(screens) do
@@ -517,6 +698,12 @@ function vimouse.getMonitorForWindow(win)
   end
 
   return nil
+end
+
+function vimouse.getMouseMonitorNumber()
+  local s = hs.mouse.getCurrentScreen()
+  local result = vimouse.getMonitorForScreen(s)
+  return result
 end
 
 function vimouse.getFocusedMonitorNumber()
@@ -531,12 +718,12 @@ end
 function vimouse.textFieldIsSelected()
     local e = hs.uielement.focusedElement()
     if (e == nil) then
-      log.w("no ui element focused")
+      vimouse.w("no ui element focused")
       return false
     end
 
     local role = e:role()
-    log.w("ui element:" .. role)
+    vimouse.w("ui element:" .. role)
     if (string.find(role, "TextField") ~= nil) then
       return true
     end
@@ -554,7 +741,7 @@ function vimouse.info()
     --vimouse.alert(w:title() .. "." .. monitorNumber)
     local e = hs.uielement.focusedElement()
     if (e ~= nil) then
-      log.w("focused element", e:role(), vimouse.textFieldIsSelected())
+      --vimouse.w("focused element", e:role(), vimouse.textFieldIsSelected())
     end
   end
 end
@@ -572,12 +759,19 @@ function vimouse.toggle()
   vimouse.gridVisible = not vimouse.gridVisible
 end
 
+function vimouse.startDoubleClickTimer()
+  if vimouse.dblClickTimer then
+      vimouse.dblClickTimer:stop()
+  end
+  vimouse.dblClickTimer = hs.timer.doAfter(hs.eventtap.doubleClickInterval(), function() 
+    vimouse.clickCount = vimouse.clickCount + 1;
+  end)
+end
+
 function vimouse.hideBigCursor()
-  if vimouse.mouseCircle then
-      vimouse.mouseCircle:hide()
-      if vimouse.mouseCircleTimer then
-          vimouse.mouseCircleTimer:stop()
-      end
+  vimouse.setMouseCueVisibility(false)
+  if vimouse.mouseCircleTimer then
+      vimouse.mouseCircleTimer:stop()
   end
 end
 
@@ -588,14 +782,22 @@ function vimouse.deleteMonitorCues()
   monitorCues = {}
 end
 
-function vimouse.setMonitorCueVisibility(shouldShow)
-  for index,cue in ipairs(monitorCues) do
+function vimouse.setVisibility(items, shouldShow)
+  for index,item in ipairs(items) do
     if (shouldShow) then
-      cue:show()
+      item:show()
     else
-      cue:hide()
+      item:hide()
     end
   end
+end
+
+function vimouse.setMonitorCueVisibility(shouldShow)
+  vimouse.setVisibility(monitorCues, shouldShow)
+end
+
+function vimouse.setMouseCueVisibility(shouldShow)
+  vimouse.setVisibility(mouseCues, shouldShow)
 end
 
 function vimouse.doHide()
@@ -621,7 +823,7 @@ end
 function vimouse.toggleGridVisibility(gridsToIterate, shouldShow)
   for i,grid in ipairs(gridsToIterate) do
     for j,cell in ipairs(grid) do
-      --log.w('VISIBLE.g', shouldShow, cell)
+      --vimouse.w('VISIBLE.g', shouldShow, cell)
       if shouldShow then
         cell:show()
       else
@@ -660,7 +862,7 @@ function vimouse.createMonitorCue(s, index)
   local pt = vimouse.getCenterOfScreen(s)
   local size = 100
   local txtRect = hs.geometry.rect(pt.x-size,pt.y-size,size*2,size*2)
-  --log.w("MONITOR CUE AT:", toCSV(txtRect))
+  --vimouse.w("MONITOR CUE AT:", toCSV(txtRect))
   local label = index
   local monitorLabel = vimouse.textInRect(txtRect, label)
   monitorLabel:setTextSize(MONITOR_LABEL_FONT_SIZE)
@@ -686,11 +888,19 @@ function vimouse.recreateGridsForEachMonitor()
   for index,s in ipairs(screens) do
     local f=s:fullFrame()
     local sid = index
-    local grid = vimouse.drawGridInFrame(sid, NUM_COLS,NUM_ROWS,f)
-    table.insert(grids, grid)
+
+    --local grid = vimouse.drawGridInFrame(sid, NUM_COLS,NUM_ROWS,f)
+    local grid = vimouse.createGridForScreen(s)
+    vimouse.addToGrids(grid)
 
     vimouse.createMonitorCue(s, index)
   end
+end
+
+function vimouse.addToGrids(item)
+    local grid = {}
+    table.insert(grid, item)
+    table.insert(grids, grid)
 end
 
 function vimouse.deleteGridForEachMonitor()
@@ -750,7 +960,7 @@ end
 function vimouse.moveMouse(x,y,hilightCursor)
     local ptMouse = {x=x, y=y}
     hs.mouse.setAbsolutePosition(ptMouse)
-    log.w("mouse pos:", toCSV(ptMouse))
+    --vimouse.w("mouse pos:", toCSV(ptMouse))
     if (hilightCursor == nil) or (hilightCursor) then
       vimouse.refreshBigCursor()
     end
@@ -774,28 +984,88 @@ function vimouse.moveMouseDelta(deltaX,deltaY,multiplier)
     vimouse.refreshBigCursor()
 end
 
-function vimouse.showBigCursor()
+function vimouse.getMouseRect(cellSize)
+    cellSize = cellSize or vimouse.getCellSize()
+    local delta = 1
+    cellSize.w = delta * cellSize.w
+    cellSize.h = delta * cellSize.h
+    local ptMouse = hs.mouse.getAbsolutePosition()
+    local x = ptMouse.x - 1 * cellSize.w;
+    local y = ptMouse.y - 1 * cellSize.h;
+    local w = 2 * cellSize.w;
+    local h = 2 * cellSize.h;
+    local result = hs.geometry.rect(x,y,w,h)
+    return result
+end
+
+function vimouse.getMouseRect(cellSize)
+    local pt = hs.mouse.getAbsolutePosition()
+    local length = 100
+    local w = length
+    local h = length
+    local half = length / 2
+    local result = hs.geometry.rect(pt.x-half, pt.y-half,w,h)
+    return result
+end
+
+function vimouse.createMouseCursorGrid()
+    local r = vimouse.getMouseRect(cellSize)
+    local grid;
+    --grid = vimouse.createGridForRect(r, "chars_grid.png")
+    --grid = vimouse.createGridForRect(r, "chars_grid2.png")
+    --grid = vimouse.createGridForRect(r, "5x5.png")
+    --grid = vimouse.createGridForRect(r, "3x3_square.png")
+
+    --grid = vimouse.createGridForRect(r, "3x3_square_small.png")
+    grid = vimouse.createGridForRect(r, "3x3_75.png")
+
+    table.insert(mouseCues, grid)
+
+    return grid
+end
+
+function vimouse.getMousePt()
     local ptMouse
     ptMouse = hs.mouse.getAbsolutePosition()
     local pt = {x=ptMouse.x-CURSOR_HIGHLIGHT_RADIUS, y=ptMouse.y-CURSOR_HIGHLIGHT_RADIUS}
-    if (not vimouse.mouseCircle) then
-      vimouse.mouseCircle = hs.drawing.circle(hs.geometry.rect(pt.x, pt.y, CURSOR_HIGHLIGHT_RADIUS*2, CURSOR_HIGHLIGHT_RADIUS*2))
-      vimouse.mouseCircle:setStrokeColor(BASE_COLOR)
-      vimouse.mouseCircle:setFill(false)
-      vimouse.mouseCircle:setStrokeWidth(7)
-      vimouse.mouseCircle:show()
-    else
-      vimouse.mouseCircle:setTopLeft(pt)
-      vimouse.mouseCircle:show()
-    end
+    return pt
+end
+
+function vimouse.createMouseCursor()
+    local r = vimouse.getMouseRect()
+
+    --vimouse.mouseCircle = hs.drawing.circle(hs.geometry.rect(pt.x, pt.y, CURSOR_HIGHLIGHT_RADIUS*2, CURSOR_HIGHLIGHT_RADIUS*2))
+    --bapbap
+    vimouse.mouseCircle = hs.drawing.rectangle(r)
+    vimouse.mouseCircle:setStrokeColor(BASE_COLOR)
+    vimouse.mouseCircle:setFill(false)
+    vimouse.mouseCircle:setStrokeWidth(7)
+
+    table.insert(mouseCues, vimouse.mouseCircle)
+end
+
+function vimouse.refreshMouseCueSizes()
+  local r = vimouse.getMouseRect()
+  for index,item in ipairs(mouseCues) do
+     item:setTopLeft(r)
+     item:setSize(r)
+  end
+end
+
+function vimouse.showBigCursor()
+  --local pt = vimouse.getMousePt()
+  local r = vimouse.getMouseRect()
+  for index,item in ipairs(mouseCues) do
+     item:setTopLeft(r)
+  end
+  vimouse.setMouseCueVisibility(true)
 end
 
 function vimouse.refreshBigCursor()
     vimouse.hideBigCursor()
 
     vimouse.showBigCursor()
-
-    vimouse.mouseCircleTimer = hs.timer.doAfter(1, function() 
+    vimouse.mouseCircleTimer = hs.timer.doAfter(25, function() 
       vimouse.hideBigCursor()
     end)
 end
@@ -819,9 +1089,13 @@ function refreshClearPhrase()
         vimouse.clearPhraseTimer:stop()
     end
     vimouse.clearPhraseTimer = hs.timer.doAfter(1, function() 
-      phrase = ""
-      vimouse.alert('Phrase cleared')
+      vimouse.clearPhrase()
     end)
+end
+
+function vimouse.clearPhrase()
+  phrase = ""
+  --vimouse.alert('Phrase cleared')
 end
 
 function vimouse.saveSettings()
@@ -830,11 +1104,17 @@ function vimouse.saveSettings()
 end
 
 function vimouse.switchToActiveMonitor()
-  local num = vimouse.getFocusedMonitorNumber()
-  if (num ~= nil) then
-    vimouse.switchToMonitor(num)
+  local numActive = vimouse.getFocusedMonitorNumber()
+  local numMouse = vimouse.getMouseMonitorNumber()
+  if (numMouse == numActive) then
     return true
   end
+
+  if (numActive ~= nil) then
+    vimouse.switchToMonitor(numActive)
+    return true
+  end
+
   return false
 end
 
@@ -845,8 +1125,9 @@ function vimouse.show()
 
     vimouse.switchToActiveMonitor()
     vimouse.setMonitorCueVisibility(true)
-    vimouse.refreshBigCursor()
+    vimouse.showBigCursor()
     vimouse.initMonitorCueTimer()
+    vimouse.flashObject(vimouse.mouseCircle, false)
 end
 
 function vimouse.hide()
@@ -855,34 +1136,225 @@ function vimouse.hide()
   vimouse.setMonitorCueVisibility(false)
 end
 
-
-function vimouse.drawImageGrid(cols,rows,r)
-  local screen = vimouse.getCurrentScreen()
-  local r = screen:fullFrame()
-  local path = "/tmp/grid1.pdf"
-  local gridImage = hs.image.imageFromPath(path)
-  local result = hs.drawing.image(r, gridImage)
-  result:show()
-
-  return result;
+function vimouse.createGridForScreen(s)
+  local r = s:fullFrame()
+  local result = vimouse.createGridForRect(r)
+  return result
 end
 
---[[
+function vimouse.createGridForRect(r, filePath)
+  local default = "20x20.png"
+  local default = "10x10.png"
+  local default = "12x12.png"
+  local default = "10x10_BFGH.png"
+  local default = "10x10.png"
+
+  local path = filePath or default
+
+  path = vimouse.appFile(path);
+
+  local gridImage = hs.image.imageFromPath(path)
+  local result = hs.drawing.image(r, gridImage)
+  result:imageScaling('scaleToFit');
+
+  return result
+end
+
+function vimouse.scriptPath()
+  local path = package.searchpath("vimouse",package.path)
+  local result = string.sub(path,1,-9)
+  return result
+end
+
+function vimouse.appFile(path)
+  local result = vimouse.scriptPath() .. "/" .. path
+  return result
+end
+
+function vimouse.test()
+  vimouse.testTween()
+end
+
+function vimouse.repeatCallback(times, interval, callback)
+  local config = {}
+  config.j = 0
+  config.max = times
+  config.even = true
+
+  local p = function ()
+    if (config.j == config.max) then
+      return false
+    end
+    config.j = config.j + 1
+    return true
+  end
+
+  local a = function (t)
+    local percent = config.j / config.max
+    callback(percent, config)
+    config.even = not config.even
+  end
+
+  local t = hs.timer.doWhile(p, a, interval) 
+  a(t)
+end
+
+function vimouse.flashObject(obj, showWhenDone)
+  local callback = function (percent, config)
+     if (percent == 1) then
+       if (showWhenDone) then
+         obj:show()
+       else
+         obj:hide()
+       end
+     elseif (config.even) then
+       obj:show()
+     else
+       obj:hide()
+     end
+  end
+
+  local times = 3 
+  local delta = 0.1
+  vimouse.repeatCallback(times, delta, callback)
+end
+
 function vimouse.testTween()
+end
+
+function vimouse.getGridForScreen1(s)
+    local NL = "\n"
+    local img = ""
+    local rowCount = 1000
+
+    local rect = s:fullFrame()
+    local rowCount = rect.w;
+
+    local markers = {
+          "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K",
+          "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "a", "b", "c", "d", "e",
+          "f", "g", "h", "i", "j", "k", "l", "m", "n", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"
+    }
+
+    local base = string.rep(".", rowCount - 2);
+    local line = "." .. base .. "." .. NL
+
+    img = img .. "1" .. base .. "2" .. NL 
+    img = img .. "5" .. base .. "." .. NL 
+    img = img .. string.rep(line, rowCount-2)
+    img = img .. "4" .. base .. "3" .. NL
+
+    img = "ASCII:" .. img
+
+    local result = hs.drawing.image({x = 0, y = 0, h = rowCount, w = rowCount},
+                            hs.image.imageFromASCII(img, {{
+                                      strokeColor = BASE_COLOR,
+                                      fillColor   = {alpha = 0},
+                                      strokeWidth = 1,
+                                      shouldClose = false,
+                                      antialias = false,
+                                  }}))
+
+    --result:setAlpha(MONITOR_LABEL_ALPHA)
+    --result:show()
+
+    --local r = hs.geometry.rect(0,0,50,50)
+    --result.text(r, "hi there")
+
+    return result
+end
+
+function vimouse.getCellSize()
+    local s = vimouse.getCurrentScreen(s)
+    local rect = s:fullFrame()
+    local cellWidth = rect.w / NUM_COLS
+    local cellHeight = rect.h / NUM_ROWS
+    local result = {w=cellWidth, h=cellHeight}
+    return result
+end
+
+function vimouse.getGridForScreen(s)
+    local NL = "\n"
+    local img = ""
+
+    local rect = s:fullFrame()
+    local rowCount = rect.w;
+    local cellWidth = rect.w / NUM_COLS;
+    local cellHeight = rect.h / NUM_ROWS;
+
+    local grid = {}
+    for x = 1, cellWidth do
+      grid[x] = {}
+      for y = 1, cellHeight do
+        grid[x][y] = "."
+      end
+    end
+
+    local markers = {
+          "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K",
+          "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "a", "b", "c", "d", "e",
+          "f", "g", "h", "i", "j", "k", "l", "m", "n", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"
+    }
+
+    local base = string.rep(".", rowCount - 2);
+    local line = "." .. base .. "." .. NL
+
+    img = img .. "1" .. base .. "2" .. NL 
+    img = img .. "5" .. base .. "." .. NL 
+    img = img .. string.rep(line, rowCount-2)
+    img = img .. "4" .. base .. "3" .. NL
+
+    img = "ASCII:" .. img
+
+    local result = hs.drawing.image({x = 0, y = 0, h = rowCount, w = rowCount},
+                            hs.image.imageFromASCII(img, {{
+                                      strokeColor = BASE_COLOR,
+                                      fillColor   = {alpha = 0},
+                                      strokeWidth = 1,
+                                      shouldClose = false,
+                                      antialias = false,
+                                  }}))
+
+    --result:setAlpha(MONITOR_LABEL_ALPHA)
+    --result:show()
+
+    --local r = hs.geometry.rect(0,0,50,50)
+    --result.text(r, "hi there")
+
+    return result
+end
+
+function vimouse.testTweenOld()
+--[[
 local properties = {}
 local fadeTween = tween.new(2, properties, {bgcolor = {0,0,0}, fgcolor={255,0,0}}, 'linear')
-fadeTween:update(dt)
+    //fadeTween:update(dt)
     vimouse.mouseCircleTimer = hs.timer.doAfter(1, function() 
       vimouse.hideBigCursor()
     end)
-end
 ]]--
 
---vimouse.drawImageGrid()
+  local duration = 4
+  local music = { volume = 0, path = "path/to/file.mp3" }
+  local musicTween = tween.new(duration, music, {volume = 5}, 'linear')
+
+  local callback = function (percent, t)
+     vimouse.w('p:',percent)
+     vimouse.w('v:',music.volume)
+     musicTween:update(percent)
+  end
+  local delta = 0.1
+  local times = duration / delta
+  vimouse.repeatCallback(times, delta, callback)
+end
+
 vimouse.bindKeys()
-startWatchingForMonitorChanges()
+vimouse.createMouseCursor()
+vimouse.createMouseCursorGrid()
 vimouse.recreateGridsForEachMonitor()
+
+startWatchingForMonitorChanges()
+--console.clearConsole()
 --vimouse.showBrowser()
---vimouse.showBrowserCircle()
 
 return vimouse
